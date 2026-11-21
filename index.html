@@ -1,0 +1,1338 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ular Tangga Nusantara - Solo & Multiplayer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background: radial-gradient(circle at top left, #1e293b, #0f172a);
+            color: #f8fafc;
+            overflow-x: hidden;
+        }
+        h1, h2, h3, .font-game {
+            font-family: 'Fredoka', sans-serif;
+        }
+        /* Animasi Dadu */
+        @keyframes shake {
+            0% { transform: rotate(0deg) scale(1); }
+            25% { transform: rotate(15deg) scale(1.1); }
+            50% { transform: rotate(-15deg) scale(1.1); }
+            75% { transform: rotate(10deg) scale(1.05); }
+            100% { transform: rotate(0deg) scale(1); }
+        }
+        .dice-rolling {
+            animation: shake 0.65s infinite ease-in-out;
+        }
+        /* Grid Papan 10x10 */
+        .board-grid {
+            display: grid;
+            grid-template-columns: repeat(10, 1fr);
+            grid-template-rows: repeat(10, 1fr);
+            aspect-ratio: 1 / 1;
+        }
+        .cell {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            user-select: none;
+            transition: background-color 0.2s;
+        }
+        .token {
+            transition: left 0.45s cubic-bezier(0.22, 1, 0.36, 1), top 0.45s cubic-bezier(0.22, 1, 0.36, 1), transform 0.3s ease;
+            filter: drop-shadow(0 4px 6px rgba(0,0,0,0.45));
+        }
+        .token-slide {
+            transition: left 0.95s cubic-bezier(0.34, 1.56, 0.64, 1), top 0.95s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+        }
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 10px; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-2 sm:p-4">
+
+    <!-- Notifikasi Toast / Modal Pengganti Alert -->
+    <div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-xs w-full pointer-events-none"></div>
+
+    <!-- Modal Menang -->
+    <div id="win-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-slate-800 border-2 border-amber-400 rounded-3xl p-6 sm:p-8 max-w-md w-full text-center shadow-2xl transform transition-all">
+            <div class="text-6xl mb-4 animate-bounce">🏆</div>
+            <h2 class="text-3xl font-bold text-amber-400 mb-2">Selamat!</h2>
+            <p id="winner-text" class="text-lg text-slate-200 mb-6">Pemain 1 memenangkan permainan!</p>
+            <button onclick="backToMenu()" class="w-full py-3.5 px-6 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-900 font-bold rounded-2xl shadow-lg shadow-orange-500/30 transition transform active:scale-95">
+                Kembali ke Menu Utama
+            </button>
+        </div>
+    </div>
+
+    <!-- Modal Ganti Papan & Pratinjau Visual di Dalam Permainan -->
+    <div id="board-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-slate-800 border-2 border-emerald-500/60 rounded-3xl p-5 sm:p-6 max-w-md w-full shadow-2xl">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold text-emerald-400 flex items-center gap-2">🗺️ Pilih & Lihat Papan</h2>
+                <button onclick="closeBoardModal()" class="text-slate-400 hover:text-white bg-slate-700/60 hover:bg-slate-700 w-8 h-8 rounded-full flex items-center justify-center font-bold">✕</button>
+            </div>
+
+            <!-- Pilihan Jenis Papan -->
+            <div class="grid grid-cols-2 gap-2 mb-4">
+                <button onclick="previewBoardOption('classic')" id="opt-classic" class="board-opt-btn p-2.5 rounded-xl border text-xs font-bold text-left transition bg-slate-900 border-slate-700 text-slate-300 hover:border-emerald-400">
+                    🗺️ Klasik Nusantara
+                </button>
+                <button onclick="previewBoardOption('jungle')" id="opt-jungle" class="board-opt-btn p-2.5 rounded-xl border text-xs font-bold text-left transition bg-slate-900 border-slate-700 text-slate-300 hover:border-emerald-400">
+                    🌴 Rimba Ekstrem
+                </button>
+                <button onclick="previewBoardOption('sky')" id="opt-sky" class="board-opt-btn p-2.5 rounded-xl border text-xs font-bold text-left transition bg-slate-900 border-slate-700 text-slate-300 hover:border-emerald-400">
+                    ☁️ Tangga Langit
+                </button>
+                <button onclick="previewBoardOption('random')" id="opt-random" class="board-opt-btn p-2.5 rounded-xl border text-xs font-bold text-left transition bg-slate-900 border-slate-700 text-slate-300 hover:border-emerald-400">
+                    🎲 Acak Baru
+                </button>
+            </div>
+
+            <!-- Area Pratinjau Mini Papan -->
+            <div class="bg-slate-900/90 border border-slate-700 rounded-2xl p-3 mb-4">
+                <div class="flex justify-between items-center mb-2">
+                    <span id="preview-board-title" class="text-xs font-bold text-amber-300">🗺️ Papan Klasik Nusantara</span>
+                    <span id="preview-board-stats" class="text-[11px] text-slate-400">7 Tangga • 8 Ular</span>
+                </div>
+                <div class="relative w-full max-w-[260px] mx-auto aspect-square rounded-xl overflow-hidden border border-slate-600 bg-slate-950">
+                    <div id="preview-board-grid" class="board-grid w-full h-full"></div>
+                    <svg id="preview-board-svg" viewBox="0 0 1000 1000" class="absolute inset-0 w-full h-full pointer-events-none z-10"></svg>
+                </div>
+            </div>
+
+            <div class="flex gap-2.5">
+                <button onclick="closeBoardModal()" class="flex-1 py-3 px-4 bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold rounded-xl text-sm transition">
+                    Batal
+                </button>
+                <button onclick="applySelectedBoard()" class="flex-1 py-3 px-4 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold rounded-xl shadow-lg shadow-emerald-500/25 text-sm transition active:scale-95">
+                    ✓ Pakai Papan Ini
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- HALAMAN 1: MENU UTAMA -->
+    <div id="screen-menu" class="w-full max-w-md bg-slate-800/90 backdrop-blur-md border border-slate-700 rounded-3xl p-6 sm:p-8 shadow-2xl">
+        <div class="text-center mb-8">
+            <div class="inline-flex items-center justify-center w-20 h-20 rounded-3xl bg-gradient-to-br from-emerald-400 to-teal-600 text-4xl shadow-lg shadow-teal-500/30 mb-4">
+                🎲
+            </div>
+            <h1 class="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-amber-300 via-emerald-300 to-cyan-300 bg-clip-text text-transparent">
+                Ular Tangga
+            </h1>
+            <p class="text-slate-400 text-sm mt-1">Main Solo lawan Bot atau Mabar 2-4 Orang!</p>
+        </div>
+
+        <!-- Input Nama Pemain -->
+        <div class="mb-6">
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Nama Kamu</label>
+            <input type="text" id="player-name-input" maxlength="12" placeholder="Masukkan nama panggilan..." 
+                class="w-full px-4 py-3 bg-slate-900/80 border border-slate-700 rounded-2xl text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400 transition">
+        </div>
+
+        <!-- Pilihan Mode -->
+        <div class="space-y-3">
+            <div class="p-4 bg-slate-900/60 border border-slate-700/80 rounded-2xl space-y-2.5">
+                <h3 class="font-bold text-emerald-400 flex items-center gap-2">
+                    <span>🤖</span> Mode Solo (Lawan Bot)
+                </h3>
+                <div class="flex gap-2">
+                    <select id="bot-count" class="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none">
+                        <option value="1">1 Bot (2 Pemain)</option>
+                        <option value="2">2 Bot (3 Pemain)</option>
+                        <option value="3">3 Bot (4 Pemain)</option>
+                    </select>
+                    <button onclick="startSoloGame()" class="flex-1 py-2.5 px-4 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold rounded-xl shadow-lg shadow-emerald-500/20 transition active:scale-95 text-sm">
+                        Mulai Solo
+                    </button>
+                </div>
+            </div>
+
+            <div class="p-4 bg-slate-900/60 border border-slate-700/80 rounded-2xl space-y-3">
+                <h3 class="font-bold text-amber-400 flex items-center gap-2">
+                    <span>🌐</span> Multiplayer Online (2-4 Orang)
+                </h3>
+                <button id="btn-create-room" onclick="createMultiplayerRoom()" class="w-full py-3 px-4 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-slate-950 font-bold rounded-xl shadow-lg shadow-amber-500/20 transition active:scale-95 text-sm">
+                    + Buat Room Baru
+                </button>
+                
+                <div class="relative flex py-1 items-center">
+                    <div class="flex-grow border-t border-slate-700"></div>
+                    <span class="flex-shrink mx-3 text-xs text-slate-500 uppercase">Atau Gabung Room</span>
+                    <div class="flex-grow border-t border-slate-700"></div>
+                </div>
+
+                <div class="flex gap-2">
+                    <input type="text" id="room-code-input" maxlength="6" placeholder="KODE ROOM" 
+                        class="w-1/2 px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-center font-mono font-bold uppercase tracking-widest text-amber-300 placeholder-slate-600 focus:outline-none focus:border-amber-400">
+                    <button id="btn-join-room" onclick="joinMultiplayerRoom()" class="w-1/2 py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl shadow-lg shadow-indigo-500/20 transition active:scale-95 text-sm">
+                        Gabung
+                    </button>
+                </div>
+            </div>
+        </div>
+        <p id="auth-status" class="text-center text-xs text-slate-500 mt-4">Menghubungkan ke server...</p>
+    </div>
+
+    <!-- HALAMAN 2: LOBBY MULTIPLAYER -->
+    <div id="screen-lobby" class="hidden w-full max-w-md bg-slate-800/90 backdrop-blur-md border border-slate-700 rounded-3xl p-6 sm:p-8 shadow-2xl">
+        <div class="flex justify-between items-center mb-6">
+            <button onclick="leaveLobby()" class="text-slate-400 hover:text-white text-sm flex items-center gap-1 bg-slate-700/50 px-3 py-1.5 rounded-xl">
+                ← Keluar
+            </button>
+            <span class="text-xs font-semibold px-3 py-1 bg-amber-500/20 text-amber-300 rounded-full border border-amber-500/30">
+                Menunggu Pemain (2-4)
+            </span>
+        </div>
+
+        <div class="bg-slate-900/90 border border-slate-700 rounded-2xl p-4 text-center mb-6">
+            <p class="text-xs text-slate-400 uppercase tracking-wider mb-1">Kode Room Kamu</p>
+            <div class="flex items-center justify-center gap-3">
+                <span id="display-room-code" class="text-3xl font-mono font-extrabold tracking-widest text-amber-400">------</span>
+                <button onclick="copyRoomCode()" class="p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-300 transition" title="Salin Kode">
+                    📋
+                </button>
+            </div>
+            <p class="text-xs text-slate-500 mt-2">Bagikan kode ini kepada temanmu untuk bergabung</p>
+        </div>
+
+        <div class="mb-6">
+            <h3 class="text-sm font-semibold text-slate-300 mb-3">Daftar Pemain di Room:</h3>
+            <div id="lobby-players-list" class="space-y-2">
+                <!-- Daftar pemain dirender di sini -->
+            </div>
+        </div>
+
+        <div id="host-controls" class="hidden">
+            <button id="btn-start-multiplayer" onclick="startMultiplayerGame()" class="w-full py-3.5 px-6 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-2xl shadow-lg shadow-emerald-500/30 transition active:scale-95">
+                Mulai Permainan Sekarang
+            </button>
+        </div>
+        <div id="guest-waiting-msg" class="hidden text-center p-3 bg-slate-900/50 rounded-xl text-sm text-slate-400">
+            Menunggu pembuat room memulai permainan...
+        </div>
+    </div>
+
+    <!-- HALAMAN 3: ARENA PERMAINAN -->
+    <div id="screen-game" class="hidden w-full max-w-5xl flex flex-col lg:flex-row gap-4 sm:gap-6 items-center lg:items-start justify-center">
+        
+        <!-- Bagian Kiri/Atas: Papan Ular Tangga -->
+        <div class="w-full max-w-[540px] bg-slate-800 p-2 sm:p-3 rounded-3xl border-2 border-slate-700 shadow-2xl relative">
+            <!-- Header Info & Tombol Ganti Papan -->
+            <div class="flex flex-wrap justify-between items-center gap-2 mb-2 px-1">
+                <span id="game-mode-badge" class="text-xs font-bold px-2.5 py-1 rounded-lg bg-slate-700 text-slate-300">Mode Solo</span>
+                <div class="flex items-center gap-1.5">
+                    <button id="btn-open-board-modal" onclick="openBoardModal()" class="text-xs text-emerald-300 hover:text-emerald-200 font-bold px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 transition flex items-center gap-1">
+                        🗺️ Ganti Papan
+                    </button>
+                    <button onclick="backToMenu()" class="text-xs text-rose-400 hover:text-rose-300 font-semibold px-2.5 py-1 rounded-lg bg-rose-500/10 border border-rose-500/20">
+                        Keluar
+                    </button>
+                </div>
+            </div>
+
+            <!-- Area Base / Kandang Pion Sebelum Keluar (Butuh Angka 6) -->
+            <div id="start-dock" class="mb-2 px-3 py-1.5 bg-slate-900/80 border border-slate-700/80 rounded-xl flex items-center justify-between min-h-[38px]">
+                <span class="text-[11px] font-semibold text-slate-400 flex items-center gap-1.5">
+                    <span>🏠 Garis Start (Butuh ⚅ 6 untuk keluar):</span>
+                </span>
+                <div id="dock-tokens" class="flex items-center gap-1.5">
+                    <!-- Pion yang belum mendapat angka 6 ditampilkan di sini -->
+                </div>
+            </div>
+
+            <!-- Container Papan & SVG Overlay -->
+            <div class="relative w-full aspect-square rounded-2xl overflow-hidden border-2 border-slate-600 bg-slate-900">
+                <!-- Grid 100 Kotak -->
+                <div id="board-grid" class="board-grid w-full h-full"></div>
+                
+                <!-- SVG Layer untuk menggambar Ular dan Tangga secara presisi -->
+                <svg id="board-svg" viewBox="0 0 1000 1000" class="absolute inset-0 w-full h-full pointer-events-none z-10"></svg>
+                
+                <!-- Layer Pion Pemain -->
+                <div id="tokens-layer" class="absolute inset-0 w-full h-full pointer-events-none z-20"></div>
+            </div>
+        </div>
+
+        <!-- Bagian Kanan/Bawah: Panel Kontrol, Dadu, & Status Pemain -->
+        <div class="w-full max-w-[540px] lg:w-80 flex flex-col gap-4">
+            
+            <!-- Kotak Giliran & Dadu -->
+            <div class="bg-slate-800/90 border border-slate-700 rounded-3xl p-5 shadow-xl text-center">
+                <p class="text-xs uppercase tracking-wider text-slate-400 mb-1">Giliran Saat Ini</p>
+                <div id="turn-indicator" class="text-xl font-bold text-amber-400 mb-4 flex items-center justify-center gap-2">
+                    <span>Memuat...</span>
+                </div>
+
+                <!-- Visual Dadu -->
+                <div class="flex items-center justify-center gap-5 my-3">
+                    <div id="dice-box" class="w-20 h-20 bg-white text-slate-900 rounded-2xl shadow-xl flex items-center justify-center text-5xl font-bold border-4 border-slate-200 select-none">
+                        🎲
+                    </div>
+                    <button id="btn-roll-dice" onclick="handleRollDice()" class="flex-1 py-4 px-5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 disabled:from-slate-700 disabled:to-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed text-slate-950 font-extrabold text-lg rounded-2xl shadow-lg shadow-orange-500/25 transition transform active:scale-95">
+                        Kocok Dadu
+                    </button>
+                </div>
+                <p id="action-log" class="text-xs text-slate-300 mt-3 min-h-[1.5rem] bg-slate-900/60 py-1.5 px-3 rounded-xl">
+                    Siap bermain! Kocok dadu untuk mulai melangkah.
+                </p>
+            </div>
+
+            <!-- Daftar Status Pemain -->
+            <div class="bg-slate-800/90 border border-slate-700 rounded-3xl p-5 shadow-xl">
+                <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider mb-3">Posisi Pemain</h3>
+                <div id="game-players-list" class="space-y-2.5">
+                    <!-- Kartu pemain dirender di sini -->
+                </div>
+            </div>
+
+            <!-- Legenda Singkat -->
+            <div class="bg-slate-800/60 border border-slate-700/60 rounded-2xl p-3.5 text-xs text-slate-400 flex flex-wrap gap-2 justify-around">
+                <div class="flex items-center gap-1.5">
+                    <span class="w-3 h-3 rounded-full bg-emerald-400 inline-block"></span>
+                    <span>Tangga</span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                    <span class="w-3 h-3 rounded-full bg-rose-500 inline-block"></span>
+                    <span>Ular</span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                    <span class="text-amber-400 font-bold">⚅ 6</span>
+                    <span>Keluar Start & Lempar Lagi</span>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Script Logika Game & Firebase Multiplayer -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // ==========================================
+        // 1. INISIALISASI FIREBASE (MULTIPLAYER)
+        // ==========================================
+        let db = null;
+        let auth = null;
+        let currentUser = null;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'ular-tangga-app';
+
+        async function initFirebase() {
+            try {
+                if (typeof __firebase_config !== 'undefined') {
+                    const firebaseConfig = JSON.parse(__firebase_config);
+                    const app = initializeApp(firebaseConfig);
+                    auth = getAuth(app);
+                    db = getFirestore(app);
+
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                    currentUser = auth.currentUser;
+                    document.getElementById('auth-status').textContent = "🟢 Server Online Siap (Solo & Multiplayer)";
+                    document.getElementById('auth-status').classList.replace('text-slate-500', 'text-emerald-400');
+                } else {
+                    document.getElementById('auth-status').textContent = "🟡 Mode Offline (Hanya Solo tersedia)";
+                }
+            } catch (error) {
+                console.error("Firebase init error:", error);
+                document.getElementById('auth-status').textContent = "🟠 Gagal terhubung ke server online (Mode Solo aktif)";
+            }
+        }
+
+        // ==========================================
+        // 2. KONFIGURASI PAPAN, ULAR, & TANGGA
+        // ==========================================
+        const PLAYER_COLORS = [
+            { name: 'Merah', hex: '#ef4444', bg: 'bg-red-500', border: 'border-red-300', emoji: '🔴' },
+            { name: 'Biru', hex: '#3b82f6', bg: 'bg-blue-500', border: 'border-blue-300', emoji: '🔵' },
+            { name: 'Hijau', hex: '#10b981', bg: 'bg-emerald-500', border: 'border-emerald-300', emoji: '🟢' },
+            { name: 'Kuning', hex: '#eab308', bg: 'bg-yellow-500', border: 'border-yellow-200', emoji: '🟡' }
+        ];
+
+        const BOARD_PRESETS = {
+            classic: {
+                name: '🗺️ Papan Klasik Nusantara',
+                ladders: { 4: 25, 13: 46, 33: 49, 42: 63, 50: 69, 62: 81, 74: 92 },
+                snakes: { 27: 5, 40: 3, 43: 18, 54: 31, 66: 45, 76: 58, 89: 53, 99: 41 }
+            },
+            jungle: {
+                name: '🌴 Papan Rimba Ekstrem',
+                ladders: { 6: 27, 20: 41, 35: 56, 52: 72, 68: 88 },
+                snakes: { 24: 4, 38: 15, 48: 12, 61: 22, 73: 34, 84: 46, 93: 51, 97: 64, 99: 29 }
+            },
+            sky: {
+                name: '☁️ Papan Tangga Langit',
+                ladders: { 3: 24, 11: 32, 19: 44, 28: 53, 39: 65, 51: 77, 63: 85, 71: 94 },
+                snakes: { 36: 14, 59: 37, 79: 47, 91: 69, 98: 75 }
+            }
+        };
+
+        let activeLadders = { ...BOARD_PRESETS.classic.ladders };
+        let activeSnakes = { ...BOARD_PRESETS.classic.snakes };
+
+        function generateRandomBoardLayout() {
+            const ladders = {};
+            const snakes = {};
+            const usedCells = new Set([1, 100]);
+
+            // Buat 7 Tangga acak
+            let attempts = 0;
+            while (Object.keys(ladders).length < 7 && attempts < 300) {
+                attempts++;
+                const start = Math.floor(Math.random() * 75) + 3; // 3..77
+                const end = start + Math.floor(Math.random() * 25) + 12; // naik minimal 12 kotak
+                if (end < 99 && !usedCells.has(start) && !usedCells.has(end)) {
+                    ladders[start] = end;
+                    usedCells.add(start);
+                    usedCells.add(end);
+                }
+            }
+
+            // Buat 8 Ular acak
+            attempts = 0;
+            while (Object.keys(snakes).length < 8 && attempts < 300) {
+                attempts++;
+                const head = Math.floor(Math.random() * 80) + 19; // 19..98
+                const tail = head - (Math.floor(Math.random() * 28) + 12); // turun minimal 12 kotak
+                if (tail > 2 && !usedCells.has(head) && !usedCells.has(tail)) {
+                    snakes[head] = tail;
+                    usedCells.add(head);
+                    usedCells.add(tail);
+                }
+            }
+
+            return {
+                name: '🎲 Papan Acak Kustom',
+                ladders,
+                snakes
+            };
+        }
+
+        function getBoardConfigByPreset(presetKey) {
+            if (presetKey === 'random') {
+                return generateRandomBoardLayout();
+            }
+            const preset = BOARD_PRESETS[presetKey] || BOARD_PRESETS.classic;
+            return {
+                name: preset.name,
+                ladders: { ...preset.ladders },
+                snakes: { ...preset.snakes }
+            };
+        }
+
+        const DICE_FACES = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+
+        // ==========================================
+        // 3. STATE PERMAINAN
+        // ==========================================
+        let gameState = {
+            mode: 'solo', // 'solo' atau 'multiplayer'
+            roomCode: null,
+            hostId: null,
+            status: 'menu', // 'menu', 'lobby', 'playing', 'finished'
+            boardPreset: 'classic',
+            boardName: BOARD_PRESETS.classic.name,
+            ladders: { ...BOARD_PRESETS.classic.ladders },
+            snakes: { ...BOARD_PRESETS.classic.snakes },
+            players: [], // { id, name, pos, colorIdx, isBot }
+            turnIndex: 0,
+            lastDice: null,
+            lastLog: '',
+            winner: null
+        };
+
+        let isAnimating = false;
+        let unsubscribeRoom = null;
+
+        // ==========================================
+        // 4. HELPER UI & NOTIFIKASI
+        // ==========================================
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            const colors = {
+                info: 'bg-slate-800 border-slate-600 text-white',
+                success: 'bg-emerald-900/95 border-emerald-500 text-emerald-100',
+                error: 'bg-rose-900/95 border-rose-500 text-rose-100',
+                warning: 'bg-amber-900/95 border-amber-500 text-amber-100'
+            };
+            toast.className = `p-3.5 rounded-2xl border shadow-xl text-sm font-medium pointer-events-auto transition-all duration-300 transform translate-y-0 ${colors[type]}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateY(-10px)';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        function switchScreen(screenName) {
+            ['screen-menu', 'screen-lobby', 'screen-game'].forEach(id => {
+                document.getElementById(id).classList.add('hidden');
+            });
+            document.getElementById(`screen-${screenName}`).classList.remove('hidden');
+        }
+
+        function getPlayerName() {
+            const input = document.getElementById('player-name-input').value.trim();
+            return input || `Pemain_${Math.floor(100 + Math.random() * 900)}`;
+        }
+
+        // ==========================================
+        // 5. RENDER PAPAN, ULAR, & TANGGA (SVG)
+        // ==========================================
+        function getCellCoordinates(cellNum) {
+            // cellNum 1..100 -> mengembalikan koordinat tengah (x, y) dalam skala 0..1000
+            const idx = cellNum - 1;
+            const rowFromBottom = Math.floor(idx / 10);
+            const colInRow = idx % 10;
+            // Zig-zag (Boustrophedon): baris genap dari bawah kiri->kanan, baris ganjil kanan->kiri
+            const actualCol = (rowFromBottom % 2 === 0) ? colInRow : (9 - colInRow);
+            const actualRowFromTop = 9 - rowFromBottom;
+
+            return {
+                x: actualCol * 100 + 50,
+                y: actualRowFromTop * 100 + 50
+            };
+        }
+
+        function renderBoard(gridId = 'board-grid', svgId = 'board-svg', laddersObj = activeLadders, snakesObj = activeSnakes, isMini = false) {
+            const grid = document.getElementById(gridId);
+            grid.innerHTML = '';
+
+            // Render 100 kotak dari baris atas (row 0) ke bawah (row 9)
+            for (let row = 0; row < 10; row++) {
+                const rowFromBottom = 9 - row;
+                for (let col = 0; col < 10; col++) {
+                    const actualCol = (rowFromBottom % 2 === 0) ? col : (9 - col);
+                    const cellNum = rowFromBottom * 10 + actualCol + 1;
+
+                    const cell = document.createElement('div');
+                    // Warna papan selang-seling yang nyaman di mata
+                    const isEven = (row + col) % 2 === 0;
+                    let bgClass = isEven ? 'bg-slate-800/90 text-slate-300' : 'bg-slate-700/70 text-slate-200';
+                    
+                    if (cellNum === 1) bgClass = 'bg-emerald-600/40 text-emerald-300';
+                    if (cellNum === 100) bgClass = 'bg-amber-500/40 text-amber-300';
+                    if (laddersObj[cellNum]) bgClass = 'bg-emerald-900/40 text-emerald-300';
+                    if (snakesObj[cellNum]) bgClass = 'bg-rose-900/40 text-rose-300';
+
+                    cell.className = `cell border border-slate-700/40 ${isMini ? 'text-[7px]' : 'text-[10px] sm:text-xs'} ${bgClass}`;
+                    
+                    let label = cellNum;
+                    if (!isMini) {
+                        if (cellNum === 1) label = '1';
+                        if (cellNum === 100) label = '🏁100';
+                    }
+
+                    cell.innerHTML = `<span class="absolute top-0.5 left-1 opacity-80">${label}</span>`;
+                    grid.appendChild(cell);
+                }
+            }
+
+            drawSnakesAndLadders(svgId, laddersObj, snakesObj);
+        }
+
+        function drawSnakesAndLadders(svgId = 'board-svg', laddersObj = activeLadders, snakesObj = activeSnakes) {
+            const svg = document.getElementById(svgId);
+            svg.innerHTML = '';
+
+            // Gambar Tangga (Garis rel ganda + anak tangga)
+            Object.entries(laddersObj).forEach(([startStr, end]) => {
+                const start = parseInt(startStr);
+                const p1 = getCellCoordinates(start);
+                const p2 = getCellCoordinates(end);
+
+                const dx = p2.x - p1.x;
+                const dy = p2.y - p1.y;
+                const len = Math.hypot(dx, dy);
+                const angle = Math.atan2(dy, dx);
+                const offsetX = Math.sin(angle) * 14;
+                const offsetY = -Math.cos(angle) * 14;
+
+                // Dua rel tangga
+                const rail1 = `<line x1="${p1.x - offsetX}" y1="${p1.y - offsetY}" x2="${p2.x - offsetX}" y2="${p2.y - offsetY}" stroke="#10b981" stroke-width="7" stroke-linecap="round" opacity="0.85" />`;
+                const rail2 = `<line x1="${p1.x + offsetX}" y1="${p1.y + offsetY}" x2="${p2.x + offsetX}" y2="${p2.y + offsetY}" stroke="#10b981" stroke-width="7" stroke-linecap="round" opacity="0.85" />`;
+                svg.innerHTML += rail1 + rail2;
+
+                // Anak tangga
+                const steps = Math.floor(len / 35);
+                for (let i = 1; i < steps; i++) {
+                    const t = i / steps;
+                    const rx = p1.x + dx * t;
+                    const ry = p1.y + dy * t;
+                    svg.innerHTML += `<line x1="${rx - offsetX}" y1="${ry - offsetY}" x2="${rx + offsetX}" y2="${ry + offsetY}" stroke="#6ee7b7" stroke-width="5" stroke-linecap="round" opacity="0.9" />`;
+                }
+            });
+
+            // Gambar Ular (Kurva melengkung + kepala ular)
+            Object.entries(snakesObj).forEach(([headStr, tail]) => {
+                const head = parseInt(headStr);
+                const p1 = getCellCoordinates(head);
+                const p2 = getCellCoordinates(tail);
+
+                const midX = (p1.x + p2.x) / 2;
+                const midY = (p1.y + p2.y) / 2;
+                const dx = p2.x - p1.x;
+                const dy = p2.y - p1.y;
+                // Titik kontrol kurva untuk efek tubuh ular meliuk
+                const ctrlX = midX - dy * 0.25;
+                const ctrlY = midY + dx * 0.25;
+
+                // Badan ular
+                svg.innerHTML += `<path d="M ${p1.x} ${p1.y} Q ${ctrlX} ${ctrlY} ${p2.x} ${p2.y}" fill="none" stroke="#f43f5e" stroke-width="11" stroke-linecap="round" opacity="0.85" />`;
+                svg.innerHTML += `<path d="M ${p1.x} ${p1.y} Q ${ctrlX} ${ctrlY} ${p2.x} ${p2.y}" fill="none" stroke="#fda4af" stroke-width="3" stroke-dasharray="10,12" stroke-linecap="round" opacity="0.9" />`;
+                
+                // Kepala ular di titik awal (head)
+                svg.innerHTML += `<circle cx="${p1.x}" cy="${p1.y}" r="14" fill="#e11d48" stroke="#ffe4e6" stroke-width="2" />`;
+                svg.innerHTML += `<circle cx="${p1.x - 4}" cy="${p1.y - 3}" r="2.5" fill="#fff" />`;
+                svg.innerHTML += `<circle cx="${p1.x + 4}" cy="${p1.y - 3}" r="2.5" fill="#fff" />`;
+            });
+        }
+
+        function renderTokens(isSliding = false) {
+            const layer = document.getElementById('tokens-layer');
+            const dockLayer = document.getElementById('dock-tokens');
+            dockLayer.innerHTML = '';
+
+            // Pertahankan elemen pion yang sudah ada di papan agar transisi CSS (left/top) berjalan mulus!
+            const existingTokens = {};
+            layer.querySelectorAll('[data-player-id]').forEach(el => {
+                existingTokens[el.getAttribute('data-player-id')] = el;
+            });
+
+            // Kelompokkan pemain yang sudah keluar di papan (pos >= 1)
+            const posGroups = {};
+            gameState.players.forEach((p, idx) => {
+                if (p.pos >= 1) {
+                    if (!posGroups[p.pos]) posGroups[p.pos] = [];
+                    posGroups[p.pos].push({ player: p, index: idx });
+                }
+            });
+
+            const offsets = [
+                { x: -12, y: -12 },
+                { x: 12, y: -12 },
+                { x: -12, y: 12 },
+                { x: 12, y: 12 }
+            ];
+
+            const activeOnBoardIds = new Set();
+
+            gameState.players.forEach((p, idx) => {
+                const color = PLAYER_COLORS[p.colorIdx];
+
+                // Jika posisi masih 0 (belum mendapat angka 6), tampilkan di area Garis Start (dock)
+                if (p.pos < 1) {
+                    if (existingTokens[p.id]) {
+                        existingTokens[p.id].remove();
+                    }
+                    const dockToken = document.createElement('div');
+                    dockToken.className = `w-6 h-6 rounded-full ${color.bg} border-2 ${color.border} flex items-center justify-center text-[10px] font-extrabold text-white shadow`;
+                    dockToken.textContent = p.name.substring(0, 1).toUpperCase();
+                    dockToken.title = `${p.name} (Menunggu angka 6 untuk keluar)`;
+                    dockLayer.appendChild(dockToken);
+                    return;
+                }
+
+                activeOnBoardIds.add(p.id);
+                const coords = getCellCoordinates(p.pos);
+                const group = posGroups[p.pos];
+                const posInGroup = group.findIndex(item => item.index === idx);
+                const offset = group.length > 1 ? offsets[posInGroup] : { x: 0, y: 0 };
+
+                const leftPercent = ((coords.x + offset.x) / 1000) * 100;
+                const topPercent = ((coords.y + offset.y) / 1000) * 100;
+
+                let token = existingTokens[p.id];
+                if (!token) {
+                    token = document.createElement('div');
+                    token.setAttribute('data-player-id', p.id);
+                    layer.appendChild(token);
+                }
+
+                token.className = `token ${isSliding ? 'token-slide' : ''} absolute w-6 h-6 sm:w-7 sm:h-7 -ml-3 -mt-3 sm:-ml-3.5 sm:-mt-3.5 rounded-full ${color.bg} border-2 ${color.border} flex items-center justify-center text-[10px] sm:text-xs font-extrabold text-white shadow-lg`;
+                token.style.left = `${leftPercent}%`;
+                token.style.top = `${topPercent}%`;
+                token.textContent = p.name.substring(0, 1).toUpperCase();
+                token.title = `${p.name} (Kotak ${p.pos})`;
+            });
+
+            // Hapus pion yang tidak lagi ada di papan
+            Object.keys(existingTokens).forEach(id => {
+                if (!activeOnBoardIds.has(id)) existingTokens[id].remove();
+            });
+        }
+
+        // ==========================================
+        // MODAL GANTI PAPAN DI DALAM PERMAINAN
+        // ==========================================
+        let pendingBoardConfig = null;
+
+        window.openBoardModal = function() {
+            if (isAnimating) {
+                showToast("Tunggu pergerakan pion selesai dulu ya!", "warning");
+                return;
+            }
+            if (gameState.mode === 'multiplayer' && currentUser && gameState.hostId !== currentUser.uid) {
+                showToast("Hanya pembuat room (Host) yang dapat mengganti papan!", "warning");
+                return;
+            }
+            document.getElementById('board-modal').classList.remove('hidden');
+            previewBoardOption(gameState.boardPreset || 'classic');
+        };
+
+        window.closeBoardModal = function() {
+            document.getElementById('board-modal').classList.add('hidden');
+        };
+
+        window.previewBoardOption = function(presetKey) {
+            const cfg = getBoardConfigByPreset(presetKey);
+            pendingBoardConfig = { presetKey, ...cfg };
+
+            // Highlight tombol yang dipilih
+            document.querySelectorAll('.board-opt-btn').forEach(btn => {
+                btn.classList.remove('border-emerald-400', 'bg-emerald-950/60', 'text-emerald-300');
+                btn.classList.add('border-slate-700', 'bg-slate-900', 'text-slate-300');
+            });
+            const activeBtn = document.getElementById(`opt-${presetKey}`);
+            if (activeBtn) {
+                activeBtn.classList.remove('border-slate-700', 'bg-slate-900', 'text-slate-300');
+                activeBtn.classList.add('border-emerald-400', 'bg-emerald-950/60', 'text-emerald-300');
+            }
+
+            document.getElementById('preview-board-title').textContent = cfg.name;
+            document.getElementById('preview-board-stats').textContent = `${Object.keys(cfg.ladders).length} Tangga • ${Object.keys(cfg.snakes).length} Ular`;
+
+            // Gambar bentuk papan mini di dalam modal
+            renderBoard('preview-board-grid', 'preview-board-svg', cfg.ladders, cfg.snakes, true);
+        };
+
+        window.applySelectedBoard = async function() {
+            if (!pendingBoardConfig) return;
+            const { presetKey, name, ladders, snakes } = pendingBoardConfig;
+
+            activeLadders = ladders;
+            activeSnakes = snakes;
+            gameState.boardPreset = presetKey;
+            gameState.boardName = name;
+            gameState.ladders = ladders;
+            gameState.snakes = snakes;
+
+            renderBoard('board-grid', 'board-svg', activeLadders, activeSnakes, false);
+            closeBoardModal();
+
+            if (gameState.mode === 'solo') {
+                document.getElementById('game-mode-badge').textContent = `🤖 Solo • ${name}`;
+                showToast(`Papan diganti ke ${name}!`, "success");
+            } else if (gameState.mode === 'multiplayer' && db && gameState.roomCode) {
+                try {
+                    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', gameState.roomCode);
+                    await updateDoc(roomRef, {
+                        boardPreset: presetKey,
+                        boardName: name,
+                        ladders: ladders,
+                        snakes: snakes,
+                        lastLog: `🗺️ Host mengganti papan ke ${name}!`,
+                        updatedAt: Date.now()
+                    });
+                    showToast(`Papan room diperbarui ke ${name}!`, "success");
+                } catch (e) {
+                    console.error(e);
+                    showToast("Gagal menyinkronkan papan baru.", "error");
+                }
+            }
+        };
+
+        // ==========================================
+        // 6. LOGIKA MODE SOLO (LAWAN BOT)
+        // ==========================================
+        window.startSoloGame = function() {
+            const playerName = getPlayerName();
+            const botCount = parseInt(document.getElementById('bot-count').value);
+            const boardCfg = getBoardConfigByPreset('classic');
+
+            activeLadders = boardCfg.ladders;
+            activeSnakes = boardCfg.snakes;
+
+            const players = [
+                { id: 'local-player', name: playerName, pos: 0, colorIdx: 0, isBot: false }
+            ];
+
+            const botNames = ['Bot Nusantara', 'Bot Garuda', 'Bot Komodo'];
+            for (let i = 0; i < botCount; i++) {
+                players.push({
+                    id: `bot-${i + 1}`,
+                    name: botNames[i],
+                    pos: 0,
+                    colorIdx: i + 1,
+                    isBot: true
+                });
+            }
+
+            gameState = {
+                mode: 'solo',
+                roomCode: null,
+                hostId: 'local-player',
+                status: 'playing',
+                boardPreset: 'classic',
+                boardName: boardCfg.name,
+                ladders: activeLadders,
+                snakes: activeSnakes,
+                players: players,
+                turnIndex: 0,
+                lastDice: null,
+                lastLog: `Permainan dimulai! ${players[0].name} butuh angka 6 untuk keluar start.`,
+                winner: null
+            };
+
+            document.getElementById('game-mode-badge').textContent = `🤖 Solo • ${boardCfg.name}`;
+            switchScreen('game');
+            document.getElementById('tokens-layer').innerHTML = '';
+            renderBoard();
+            updateGameUI();
+        };
+
+        // ==========================================
+        // 7. LOGIKA MODE MULTIPLAYER (2-4 ORANG)
+        // ==========================================
+        function generateRoomCode() {
+            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+            let code = '';
+            for (let i = 0; i < 5; i++) {
+                code += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            return code;
+        }
+
+        window.createMultiplayerRoom = async function() {
+            if (!db || !currentUser) {
+                showToast("Server multiplayer belum siap. Coba beberapa saat lagi atau main Solo.", "error");
+                return;
+            }
+
+            const btn = document.getElementById('btn-create-room');
+            btn.disabled = true;
+            btn.textContent = "Membuat Room...";
+
+            try {
+                const playerName = getPlayerName();
+                const roomCode = generateRoomCode();
+                const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+                const defaultBoard = BOARD_PRESETS.classic;
+
+                const initialRoomData = {
+                    roomCode: roomCode,
+                    hostId: currentUser.uid,
+                    status: 'lobby',
+                    boardPreset: 'classic',
+                    boardName: defaultBoard.name,
+                    ladders: defaultBoard.ladders,
+                    snakes: defaultBoard.snakes,
+                    players: [
+                        { id: currentUser.uid, name: playerName, pos: 0, colorIdx: 0, isBot: false }
+                    ],
+                    turnIndex: 0,
+                    lastDice: null,
+                    lastLog: 'Menunggu pemain bergabung...',
+                    winner: null,
+                    updatedAt: Date.now()
+                };
+
+                await setDoc(roomRef, initialRoomData);
+                listenToRoom(roomCode);
+                showToast(`Room ${roomCode} berhasil dibuat!`, "success");
+            } catch (err) {
+                console.error(err);
+                showToast("Gagal membuat room. Periksa koneksi internetmu.", "error");
+            } finally {
+                btn.disabled = false;
+                btn.textContent = "+ Buat Room Baru";
+            }
+        };
+
+        window.joinMultiplayerRoom = async function() {
+            if (!db || !currentUser) {
+                showToast("Server multiplayer belum siap.", "error");
+                return;
+            }
+
+            const rawCode = document.getElementById('room-code-input').value.trim().toUpperCase();
+            if (rawCode.length < 4) {
+                showToast("Masukkan kode room yang valid!", "warning");
+                return;
+            }
+
+            const btn = document.getElementById('btn-join-room');
+            btn.disabled = true;
+            btn.textContent = "Masuk...";
+
+            try {
+                const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', rawCode);
+                const snap = await getDoc(roomRef);
+
+                if (!snap.exists()) {
+                    showToast("Kode room tidak ditemukan!", "error");
+                    return;
+                }
+
+                const data = snap.data();
+                if (data.status !== 'lobby') {
+                    showToast("Permainan di room ini sudah dimulai!", "warning");
+                    return;
+                }
+
+                const alreadyIn = data.players.some(p => p.id === currentUser.uid);
+                if (!alreadyIn) {
+                    if (data.players.length >= 4) {
+                        showToast("Room sudah penuh (Maksimal 4 pemain)!", "error");
+                        return;
+                    }
+                    const playerName = getPlayerName();
+                    const usedColors = data.players.map(p => p.colorIdx);
+                    const nextColor = [0, 1, 2, 3].find(c => !usedColors.includes(c)) ?? 0;
+
+                    const updatedPlayers = [
+                        ...data.players,
+                        { id: currentUser.uid, name: playerName, pos: 0, colorIdx: nextColor, isBot: false }
+                    ];
+
+                    await updateDoc(roomRef, {
+                        players: updatedPlayers,
+                        updatedAt: Date.now()
+                    });
+                }
+
+                listenToRoom(rawCode);
+                showToast(`Berhasil bergabung ke room ${rawCode}!`, "success");
+            } catch (err) {
+                console.error(err);
+                showToast("Terjadi kesalahan saat bergabung ke room.", "error");
+            } finally {
+                btn.disabled = false;
+                btn.textContent = "Gabung";
+            }
+        };
+
+        function listenToRoom(roomCode) {
+            if (unsubscribeRoom) unsubscribeRoom();
+
+            const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
+            unsubscribeRoom = onSnapshot(roomRef, (docSnap) => {
+                if (!docSnap.exists()) {
+                    showToast("Room telah ditutup oleh host.", "warning");
+                    backToMenu();
+                    return;
+                }
+
+                const data = docSnap.data();
+                const prevStatus = gameState.status;
+                const boardChanged = JSON.stringify(activeLadders) !== JSON.stringify(data.ladders) || JSON.stringify(activeSnakes) !== JSON.stringify(data.snakes);
+                gameState = {
+                    mode: 'multiplayer',
+                    ...data
+                };
+
+                if (data.ladders && data.snakes) {
+                    activeLadders = data.ladders;
+                    activeSnakes = data.snakes;
+                }
+
+                if (data.status === 'lobby') {
+                    switchScreen('lobby');
+                    renderLobbyUI();
+                } else if (data.status === 'playing' || data.status === 'finished') {
+                    if (prevStatus !== 'playing' && prevStatus !== 'finished') {
+                        switchScreen('game');
+                        document.getElementById('tokens-layer').innerHTML = '';
+                        renderBoard();
+                    } else if (boardChanged) {
+                        renderBoard();
+                    }
+                    document.getElementById('game-mode-badge').textContent = `🌐 ${data.roomCode} • ${data.boardName || 'Klasik'}`;
+                    updateGameUI();
+                }
+            }, (error) => {
+                console.error("Snapshot error:", error);
+                showToast("Koneksi ke room terputus.", "error");
+            });
+        }
+
+        function renderLobbyUI() {
+            document.getElementById('display-room-code').textContent = gameState.roomCode;
+            const listEl = document.getElementById('lobby-players-list');
+            listEl.innerHTML = '';
+
+            gameState.players.forEach((p, idx) => {
+                const color = PLAYER_COLORS[p.colorIdx];
+                const isHost = p.id === gameState.hostId;
+                const isMe = currentUser && p.id === currentUser.uid;
+
+                listEl.innerHTML += `
+                    <div class="flex items-center justify-between p-3 bg-slate-900/80 border border-slate-700 rounded-2xl">
+                        <div class="flex items-center gap-3">
+                            <span class="w-4 h-4 rounded-full ${color.bg} inline-block shadow"></span>
+                            <span class="font-bold text-white">${p.name} ${isMe ? '<span class="text-xs text-emerald-400">(Kamu)</span>' : ''}</span>
+                        </div>
+                        <span class="text-xs px-2.5 py-1 rounded-lg ${isHost ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-400'}">
+                            ${isHost ? '👑 Host' : 'Tamu'}
+                        </span>
+                    </div>
+                `;
+            });
+
+            const isHost = currentUser && gameState.hostId === currentUser.uid;
+            const hostControls = document.getElementById('host-controls');
+            const guestMsg = document.getElementById('guest-waiting-msg');
+            const startBtn = document.getElementById('btn-start-multiplayer');
+
+            if (isHost) {
+                hostControls.classList.remove('hidden');
+                guestMsg.classList.add('hidden');
+                startBtn.disabled = gameState.players.length < 2;
+                startBtn.textContent = gameState.players.length < 2 
+                    ? "Minimal 2 Pemain untuk Mulai" 
+                    : `Mulai Permainan (${gameState.players.length} Pemain)`;
+            } else {
+                hostControls.classList.add('hidden');
+                guestMsg.classList.remove('hidden');
+            }
+        }
+
+        window.changeLobbyBoardPreset = async function() {
+            if (!db || !gameState.roomCode) return;
+            const presetKey = document.getElementById('lobby-board-preset').value;
+            const boardCfg = getBoardConfigByPreset(presetKey);
+            const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', gameState.roomCode);
+            await updateDoc(roomRef, {
+                boardPreset: presetKey,
+                boardName: boardCfg.name,
+                ladders: boardCfg.ladders,
+                snakes: boardCfg.snakes,
+                updatedAt: Date.now()
+            });
+            showToast(`Papan diubah ke ${boardCfg.name}`, "info");
+        };
+
+        window.shuffleLobbyBoard = async function() {
+            if (!db || !gameState.roomCode) return;
+            const boardCfg = generateRandomBoardLayout();
+            const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', gameState.roomCode);
+            await updateDoc(roomRef, {
+                boardPreset: 'random',
+                boardName: boardCfg.name,
+                ladders: boardCfg.ladders,
+                snakes: boardCfg.snakes,
+                updatedAt: Date.now()
+            });
+            showToast("Posisi ular & tangga diacak ulang!", "success");
+        };
+
+        window.copyRoomCode = function() {
+            const code = gameState.roomCode;
+            const tempInput = document.createElement('input');
+            tempInput.value = code;
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            document.execCommand('copy');
+            document.body.removeChild(tempInput);
+            showToast(`Kode room ${code} disalin!`, "success");
+        };
+
+        window.leaveLobby = async function() {
+            if (gameState.mode === 'multiplayer' && db && currentUser && gameState.roomCode) {
+                try {
+                    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', gameState.roomCode);
+                    const remaining = gameState.players.filter(p => p.id !== currentUser.uid);
+                    if (remaining.length > 0) {
+                        const newHost = gameState.hostId === currentUser.uid ? remaining[0].id : gameState.hostId;
+                        await updateDoc(roomRef, {
+                            players: remaining,
+                            hostId: newHost
+                        });
+                    }
+                } catch (e) { console.error(e); }
+            }
+            backToMenu();
+        };
+
+        window.startMultiplayerGame = async function() {
+            if (!db || !gameState.roomCode) return;
+            const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', gameState.roomCode);
+            await updateDoc(roomRef, {
+                status: 'playing',
+                turnIndex: 0,
+                lastLog: `Permainan dimulai! Giliran ${gameState.players[0].name}.`,
+                updatedAt: Date.now()
+            });
+        };
+
+        // ==========================================
+        // 8. MEKANIK KOCOK DADU & PERGERAKAN PION
+        // ==========================================
+        function isMyTurn() {
+            if (gameState.status !== 'playing') return false;
+            const currentPlayer = gameState.players[gameState.turnIndex];
+            if (!currentPlayer) return false;
+
+            if (gameState.mode === 'solo') {
+                return !currentPlayer.isBot;
+            } else {
+                return currentUser && currentPlayer.id === currentUser.uid;
+            }
+        }
+
+        window.handleRollDice = async function() {
+            if (isAnimating || !isMyTurn()) return;
+            await executeTurn();
+        };
+
+        async function executeTurn() {
+            isAnimating = true;
+            const btnRoll = document.getElementById('btn-roll-dice');
+            const diceBox = document.getElementById('dice-box');
+            btnRoll.disabled = true;
+
+            // Animasi kocok dadu lebih halus & sedikit lambat
+            diceBox.classList.add('dice-rolling');
+            let shuffleInterval = setInterval(() => {
+                diceBox.textContent = DICE_FACES[Math.floor(Math.random() * 6)];
+            }, 130);
+
+            await new Promise(r => setTimeout(r, 1200));
+            clearInterval(shuffleInterval);
+            diceBox.classList.remove('dice-rolling');
+
+            const diceValue = Math.floor(Math.random() * 6) + 1;
+            diceBox.textContent = DICE_FACES[diceValue - 1];
+
+            // Jeda sejenak agar pemain bisa melihat angka dadu dengan jelas
+            await new Promise(r => setTimeout(r, 500));
+
+            // Hitung jalur pergerakan pion langkah demi langkah
+            const playersCopy = JSON.parse(JSON.stringify(gameState.players));
+            const activePlayer = playersCopy[gameState.turnIndex];
+            const startPos = activePlayer.pos;
+            let finalStepPos = startPos;
+            let logMsg = `${activePlayer.name} mendapat dadu ${diceValue}. `;
+
+            if (startPos === 0) {
+                // Aturan baru: Belum bisa keluar sebelum dapat angka 6
+                if (diceValue === 6) {
+                    activePlayer.pos = 1;
+                    finalStepPos = 1;
+                    gameState.players = playersCopy;
+                    renderTokens(false);
+                    logMsg += `🎉 Berhasil keluar ke kotak 1! Bonus lempar dadu lagi!`;
+                    await new Promise(r => setTimeout(r, 500));
+                } else {
+                    logMsg += `Belum mendapat angka 6, pion tetap di garis start.`;
+                }
+            } else {
+                const rawTarget = startPos + diceValue;
+                finalStepPos = rawTarget;
+
+                const stepPath = [];
+                if (rawTarget <= 100) {
+                    for (let p = startPos + 1; p <= rawTarget; p++) {
+                        stepPath.push(p);
+                    }
+                    logMsg += `Maju ke kotak ${finalStepPos}. `;
+                } else {
+                    // Maju sampai 100 lalu memantul mundur satu per satu
+                    for (let p = startPos + 1; p <= 100; p++) {
+                        stepPath.push(p);
+                    }
+                    const excess = rawTarget - 100;
+                    finalStepPos = 100 - excess;
+                    for (let p = 99; p >= finalStepPos; p--) {
+                        stepPath.push(p);
+                    }
+                    logMsg += `Terlalu jauh! Memantul ke kotak ${finalStepPos}. `;
+                }
+
+                // Animasi pion melangkah satu kotak demi satu kotak dengan halus
+                for (const stepPos of stepPath) {
+                    activePlayer.pos = stepPos;
+                    gameState.players = playersCopy;
+                    renderTokens(false);
+                    await new Promise(r => setTimeout(r, 420));
+                }
+
+                // Cek Tangga atau Ular dengan animasi meluncur panjang
+                if (activeLadders[finalStepPos]) {
+                    const topPos = activeLadders[finalStepPos];
+                    logMsg += `🪜 Naik tangga ke kotak ${topPos}!`;
+                    await new Promise(r => setTimeout(r, 300));
+                    activePlayer.pos = topPos;
+                    renderTokens(true);
+                    await new Promise(r => setTimeout(r, 1000));
+                } else if (activeSnakes[finalStepPos]) {
+                    const tailPos = activeSnakes[finalStepPos];
+                    logMsg += `🐍 Digigit ular! Turun ke kotak ${tailPos}.`;
+                    await new Promise(r => setTimeout(r, 300));
+                    activePlayer.pos = tailPos;
+                    renderTokens(true);
+                    await new Promise(r => setTimeout(r, 1000));
+                }
+
+                if (diceValue === 6 && activePlayer.pos < 100) {
+                    logMsg += ` 🎲 Dapat angka 6, lempar dadu lagi!`;
+                }
+            }
+
+            // Cek Kemenangan
+            let nextStatus = 'playing';
+            let winnerName = null;
+            let nextTurnIndex = gameState.turnIndex;
+
+            if (activePlayer.pos === 100) {
+                nextStatus = 'finished';
+                winnerName = activePlayer.name;
+                logMsg = `🏆 ${activePlayer.name} mencapai kotak 100 dan MENANG!`;
+            } else {
+                // Setiap mendapat angka 6, pemain bisa melempar kembali dadu
+                if (diceValue !== 6) {
+                    nextTurnIndex = (gameState.turnIndex + 1) % playersCopy.length;
+                }
+            }
+
+            // Simpan / Sinkronisasi State
+            if (gameState.mode === 'solo') {
+                gameState.players = playersCopy;
+                gameState.turnIndex = nextTurnIndex;
+                gameState.lastDice = diceValue;
+                gameState.lastLog = logMsg;
+                gameState.status = nextStatus;
+                gameState.winner = winnerName;
+                isAnimating = false;
+                updateGameUI();
+            } else if (gameState.mode === 'multiplayer' && db && gameState.roomCode) {
+                try {
+                    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', gameState.roomCode);
+                    await updateDoc(roomRef, {
+                        players: playersCopy,
+                        turnIndex: nextTurnIndex,
+                        lastDice: diceValue,
+                        lastLog: logMsg,
+                        status: nextStatus,
+                        winner: winnerName,
+                        updatedAt: Date.now()
+                    });
+                } catch (e) {
+                    console.error("Failed to sync turn:", e);
+                    showToast("Gagal mengirim langkah ke server.", "error");
+                } finally {
+                    isAnimating = false;
+                }
+            }
+        }
+
+        function updateGameUI() {
+            renderTokens();
+
+            // Update Dadu & Log
+            const diceBox = document.getElementById('dice-box');
+            if (gameState.lastDice) {
+                diceBox.textContent = DICE_FACES[gameState.lastDice - 1];
+            } else {
+                diceBox.textContent = '🎲';
+            }
+            document.getElementById('action-log').textContent = gameState.lastLog;
+
+            // Update Daftar Pemain
+            const listEl = document.getElementById('game-players-list');
+            listEl.innerHTML = '';
+
+            gameState.players.forEach((p, idx) => {
+                const color = PLAYER_COLORS[p.colorIdx];
+                const isTurn = idx === gameState.turnIndex && gameState.status === 'playing';
+                const isMe = (gameState.mode === 'solo' && !p.isBot) || (currentUser && p.id === currentUser.uid);
+                const posText = p.pos === 0 ? `<span class="text-amber-400">Garis Start (Butuh 6)</span>` : `Kotak <strong class="text-slate-200">${p.pos}</strong> / 100`;
+
+                listEl.innerHTML += `
+                    <div class="flex items-center justify-between p-3 rounded-2xl border transition-all ${isTurn ? 'bg-slate-700/90 border-amber-400 shadow-md' : 'bg-slate-900/60 border-slate-700/60'}">
+                        <div class="flex items-center gap-2.5">
+                            <span class="w-4 h-4 rounded-full ${color.bg} border ${color.border} inline-block"></span>
+                            <div>
+                                <div class="text-sm font-bold text-white flex items-center gap-1.5">
+                                    <span>${p.name}</span>
+                                    ${isMe ? '<span class="text-[10px] px-1.5 py-0.5 bg-emerald-500/20 text-emerald-300 rounded">Kamu</span>' : ''}
+                                    ${p.isBot ? '<span class="text-[10px] px-1.5 py-0.5 bg-cyan-500/20 text-cyan-300 rounded">Bot</span>' : ''}
+                                </div>
+                                <div class="text-xs text-slate-400">${posText}</div>
+                            </div>
+                        </div>
+                        ${isTurn ? '<span class="text-xs font-bold text-amber-400 animate-pulse">Giliran!</span>' : ''}
+                    </div>
+                `;
+            });
+
+            // Update Indikator Giliran & Tombol Kocok
+            const activePlayer = gameState.players[gameState.turnIndex];
+            const turnInd = document.getElementById('turn-indicator');
+            const btnRoll = document.getElementById('btn-roll-dice');
+
+            if (gameState.status === 'finished') {
+                turnInd.innerHTML = `<span>🏆 ${gameState.winner} Menang!</span>`;
+                btnRoll.disabled = true;
+                document.getElementById('winner-text').textContent = `${gameState.winner} berhasil mencapai kotak 100 lebih dulu!`;
+                document.getElementById('win-modal').classList.remove('hidden');
+                return;
+            }
+
+            if (activePlayer) {
+                const color = PLAYER_COLORS[activePlayer.colorIdx];
+                turnInd.innerHTML = `<span class="w-3.5 h-3.5 rounded-full ${color.bg} inline-block"></span> <span>${activePlayer.name}</span>`;
+            }
+
+            if (isMyTurn() && !isAnimating) {
+                btnRoll.disabled = false;
+                btnRoll.textContent = "Kocok Dadu";
+            } else {
+                btnRoll.disabled = true;
+                btnRoll.textContent = activePlayer?.isBot ? "Bot Berpikir..." : "Menunggu Giliran";
+            }
+
+            // Trigger otomatis giliran Bot pada mode Solo
+            if (gameState.mode === 'solo' && gameState.status === 'playing' && activePlayer?.isBot && !isAnimating) {
+                setTimeout(() => {
+                    if (gameState.mode === 'solo' && gameState.status === 'playing' && gameState.players[gameState.turnIndex]?.isBot && !isAnimating) {
+                        executeTurn();
+                    }
+                }, 1200);
+            }
+        }
+
+        window.backToMenu = function() {
+            if (unsubscribeRoom) {
+                unsubscribeRoom();
+                unsubscribeRoom = null;
+            }
+            isAnimating = false;
+            gameState.status = 'menu';
+            document.getElementById('win-modal').classList.add('hidden');
+            switchScreen('menu');
+        };
+
+        // Jalankan inisialisasi saat halaman dimuat
+        window.addEventListener('load', () => {
+            initFirebase();
+        });
+    </script>
+</body>
+</html>
