@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ular Tangga Nusantara - Solo & Multiplayer</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
         body {
@@ -314,42 +315,24 @@
         </div>
     </div>
 
-    <!-- Script Logika Game & Firebase Multiplayer -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, getDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
+    <!-- Script Logika Game & PeerJS Multiplayer (Berjalan di GitHub Pages & Semua Browser) -->
+    <script>
         // ==========================================
-        // 1. INISIALISASI FIREBASE (MULTIPLAYER)
+        // 1. INISIALISASI MULTIPLAYER (PEERJS P2P)
         // ==========================================
-        let db = null;
-        let auth = null;
-        let currentUser = null;
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'ular-tangga-app';
+        let peer = null;
+        let hostConnections = []; // Untuk Host: daftar koneksi tamu yang terhubung
+        let guestConnection = null; // Untuk Tamu: koneksi ke Host
+        let myPeerId = null;
+        const ROOM_PREFIX = 'UTN-GAME-';
 
-        async function initFirebase() {
-            try {
-                if (typeof __firebase_config !== 'undefined') {
-                    const firebaseConfig = JSON.parse(__firebase_config);
-                    const app = initializeApp(firebaseConfig);
-                    auth = getAuth(app);
-                    db = getFirestore(app);
-
-                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                        await signInWithCustomToken(auth, __initial_auth_token);
-                    } else {
-                        await signInAnonymously(auth);
-                    }
-                    currentUser = auth.currentUser;
-                    document.getElementById('auth-status').textContent = "🟢 Server Online Siap (Solo & Multiplayer)";
-                    document.getElementById('auth-status').classList.replace('text-slate-500', 'text-emerald-400');
-                } else {
-                    document.getElementById('auth-status').textContent = "🟡 Mode Offline (Hanya Solo tersedia)";
-                }
-            } catch (error) {
-                console.error("Firebase init error:", error);
-                document.getElementById('auth-status').textContent = "🟠 Gagal terhubung ke server online (Mode Solo aktif)";
+        function initMultiplayerEngine() {
+            const statusEl = document.getElementById('auth-status');
+            if (typeof Peer !== 'undefined') {
+                statusEl.textContent = "🟢 Server Multiplayer P2P Siap (Bisa di GitHub Pages & HP!)";
+                statusEl.classList.replace('text-slate-500', 'text-emerald-400');
+            } else {
+                statusEl.textContent = "🟡 Mode Offline (Periksa koneksi internet untuk Multiplayer)";
             }
         }
 
@@ -688,7 +671,7 @@
                 showToast("Tunggu pergerakan pion selesai dulu ya!", "warning");
                 return;
             }
-            if (gameState.mode === 'multiplayer' && currentUser && gameState.hostId !== currentUser.uid) {
+            if (gameState.mode === 'multiplayer' && myPeerId && gameState.hostId !== myPeerId) {
                 showToast("Hanya pembuat room (Host) yang dapat mengganti papan!", "warning");
                 return;
             }
@@ -739,22 +722,12 @@
             if (gameState.mode === 'solo') {
                 document.getElementById('game-mode-badge').textContent = `🤖 Solo • ${name}`;
                 showToast(`Papan diganti ke ${name}!`, "success");
-            } else if (gameState.mode === 'multiplayer' && db && gameState.roomCode) {
-                try {
-                    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', gameState.roomCode);
-                    await updateDoc(roomRef, {
-                        boardPreset: presetKey,
-                        boardName: name,
-                        ladders: ladders,
-                        snakes: snakes,
-                        lastLog: `🗺️ Host mengganti papan ke ${name}!`,
-                        updatedAt: Date.now()
-                    });
-                    showToast(`Papan room diperbarui ke ${name}!`, "success");
-                } catch (e) {
-                    console.error(e);
-                    showToast("Gagal menyinkronkan papan baru.", "error");
-                }
+            } else if (gameState.mode === 'multiplayer') {
+                gameState.lastLog = `🗺️ Host mengganti papan ke ${name}!`;
+                document.getElementById('game-mode-badge').textContent = `🌐 ${gameState.roomCode} • ${name}`;
+                updateGameUI();
+                broadcastStateToGuests();
+                showToast(`Papan room diperbarui ke ${name}!`, "success");
             }
         };
 
@@ -808,7 +781,7 @@
         };
 
         // ==========================================
-        // 7. LOGIKA MODE MULTIPLAYER (2-4 ORANG)
+        // 7. LOGIKA MODE MULTIPLAYER (2-4 ORANG VIA PEERJS)
         // ==========================================
         function generateRoomCode() {
             const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -819,9 +792,69 @@
             return code;
         }
 
-        window.createMultiplayerRoom = async function() {
-            if (!db || !currentUser) {
-                showToast("Server multiplayer belum siap. Coba beberapa saat lagi atau main Solo.", "error");
+        function cleanupPeer() {
+            if (guestConnection) {
+                try { guestConnection.close(); } catch (e) {}
+                guestConnection = null;
+            }
+            hostConnections.forEach(conn => {
+                try { conn.close(); } catch (e) {}
+            });
+            hostConnections = [];
+            if (peer) {
+                try { peer.destroy(); } catch (e) {}
+                peer = null;
+            }
+            myPeerId = null;
+        }
+
+        function broadcastStateToGuests() {
+            if (gameState.hostId !== myPeerId) return;
+            const payload = {
+                type: 'STATE_SYNC',
+                state: gameState
+            };
+            hostConnections.forEach(conn => {
+                if (conn.open) {
+                    conn.send(payload);
+                }
+            });
+        }
+
+        function applySyncedState(remoteState) {
+            const prevStatus = gameState.status;
+            const boardChanged = JSON.stringify(activeLadders) !== JSON.stringify(remoteState.ladders) ||
+                                 JSON.stringify(activeSnakes) !== JSON.stringify(remoteState.snakes);
+
+            gameState = {
+                ...remoteState,
+                mode: 'multiplayer'
+            };
+
+            if (remoteState.ladders && remoteState.snakes) {
+                activeLadders = remoteState.ladders;
+                activeSnakes = remoteState.snakes;
+            }
+
+            if (gameState.status === 'lobby') {
+                switchScreen('lobby');
+                renderLobbyUI();
+            } else if (gameState.status === 'playing' || gameState.status === 'finished') {
+                if (prevStatus !== 'playing' && prevStatus !== 'finished') {
+                    switchScreen('game');
+                    document.getElementById('tokens-layer').innerHTML = '';
+                    renderBoard();
+                } else if (boardChanged) {
+                    renderBoard();
+                }
+                document.getElementById('game-mode-badge').textContent = `🌐 ${gameState.roomCode} • ${gameState.boardName || 'Klasik'}`;
+                updateGameUI();
+            }
+        }
+
+        window.createMultiplayerRoom = function() {
+            if (typeof Peer === 'undefined') {
+                showToast("Library jaringan belum termuat. Periksa koneksi internetmu.", "error");
                 return;
             }
 
@@ -829,45 +862,116 @@
             btn.disabled = true;
             btn.textContent = "Membuat Room...";
 
-            try {
-                const playerName = getPlayerName();
-                const roomCode = generateRoomCode();
-                const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
-                const defaultBoard = BOARD_PRESETS.classic;
+            cleanupPeer();
 
-                const initialRoomData = {
+            const playerName = getPlayerName();
+            const roomCode = generateRoomCode();
+            const fullPeerId = ROOM_PREFIX + roomCode;
+
+            peer = new Peer(fullPeerId);
+
+            peer.on('open', (id) => {
+                myPeerId = id;
+                const defaultBoard = BOARD_PRESETS.classic;
+                activeLadders = { ...defaultBoard.ladders };
+                activeSnakes = { ...defaultBoard.snakes };
+
+                gameState = {
+                    mode: 'multiplayer',
                     roomCode: roomCode,
-                    hostId: currentUser.uid,
+                    hostId: myPeerId,
                     status: 'lobby',
                     boardPreset: 'classic',
                     boardName: defaultBoard.name,
-                    ladders: defaultBoard.ladders,
-                    snakes: defaultBoard.snakes,
+                    ladders: activeLadders,
+                    snakes: activeSnakes,
                     players: [
-                        { id: currentUser.uid, name: playerName, pos: 0, colorIdx: 0, isBot: false }
+                        { id: myPeerId, name: playerName, pos: 0, colorIdx: 0, isBot: false }
                     ],
                     turnIndex: 0,
                     lastDice: null,
                     lastLog: 'Menunggu pemain bergabung...',
-                    winner: null,
-                    updatedAt: Date.now()
+                    winner: null
                 };
 
-                await setDoc(roomRef, initialRoomData);
-                listenToRoom(roomCode);
-                showToast(`Room ${roomCode} berhasil dibuat!`, "success");
-            } catch (err) {
-                console.error(err);
-                showToast("Gagal membuat room. Periksa koneksi internetmu.", "error");
-            } finally {
                 btn.disabled = false;
                 btn.textContent = "+ Buat Room Baru";
-            }
+                switchScreen('lobby');
+                renderLobbyUI();
+                showToast(`Room ${roomCode} berhasil dibuat!`, "success");
+            });
+
+            // Terima koneksi dari pemain tamu
+            peer.on('connection', (conn) => {
+                conn.on('data', (data) => {
+                    if (data.type === 'JOIN_REQUEST') {
+                        if (gameState.status !== 'lobby') {
+                            conn.send({ type: 'ERROR', message: 'Permainan sudah dimulai!' });
+                            return;
+                        }
+                        if (gameState.players.length >= 4) {
+                            conn.send({ type: 'ERROR', message: 'Room sudah penuh (Maksimal 4 pemain)!' });
+                            return;
+                        }
+
+                        const usedColors = gameState.players.map(p => p.colorIdx);
+                        const nextColor = [0, 1, 2, 3].find(c => !usedColors.includes(c)) ?? 0;
+
+                        gameState.players.push({
+                            id: conn.peer,
+                            name: data.name || 'Tamu',
+                            pos: 0,
+                            colorIdx: nextColor,
+                            isBot: false
+                        });
+
+                        hostConnections.push(conn);
+                        renderLobbyUI();
+                        broadcastStateToGuests();
+                        showToast(`${data.name} bergabung ke room!`, "info");
+                    } else if (data.type === 'GUEST_ROLL_REQUEST') {
+                        const currentPlayer = gameState.players[gameState.turnIndex];
+                        if (currentPlayer && currentPlayer.id === conn.peer && !isAnimating) {
+                            executeTurn();
+                        }
+                    }
+                });
+
+                conn.on('close', () => {
+                    hostConnections = hostConnections.filter(c => c.peer !== conn.peer);
+                    const leftPlayer = gameState.players.find(p => p.id === conn.peer);
+                    if (leftPlayer) {
+                        gameState.players = gameState.players.filter(p => p.id !== conn.peer);
+                        if (gameState.turnIndex >= gameState.players.length) {
+                            gameState.turnIndex = 0;
+                        }
+                        showToast(`${leftPlayer.name} keluar dari room.`, "warning");
+                        if (gameState.status === 'lobby') {
+                            renderLobbyUI();
+                        } else {
+                            updateGameUI();
+                        }
+                        broadcastStateToGuests();
+                    }
+                });
+            });
+
+            peer.on('error', (err) => {
+                console.error("PeerJS Host Error:", err);
+                btn.disabled = false;
+                btn.textContent = "+ Buat Room Baru";
+                if (err.type === 'unavailable-id') {
+                    // Jika kode tabrakan, coba buat otomatis lagi
+                    window.createMultiplayerRoom();
+                } else {
+                    showToast("Gagal terhubung ke jaringan multiplayer. Coba lagi.", "error");
+                }
+            });
         };
 
-        window.joinMultiplayerRoom = async function() {
-            if (!db || !currentUser) {
-                showToast("Server multiplayer belum siap.", "error");
+        window.joinMultiplayerRoom = function() {
+            if (typeof Peer === 'undefined') {
+                showToast("Library jaringan belum termuat.", "error");
                 return;
             }
 
@@ -881,96 +985,61 @@
             btn.disabled = true;
             btn.textContent = "Masuk...";
 
-            try {
-                const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', rawCode);
-                const snap = await getDoc(roomRef);
+            cleanupPeer();
 
-                if (!snap.exists()) {
-                    showToast("Kode room tidak ditemukan!", "error");
-                    return;
+            const playerName = getPlayerName();
+            const hostPeerId = ROOM_PREFIX + rawCode;
+            peer = new Peer();
+
+            const timeoutTimer = setTimeout(() => {
+                if (!guestConnection || !guestConnection.open) {
+                    btn.disabled = false;
+                    btn.textContent = "Gabung";
+                    cleanupPeer();
+                    showToast("Kode room tidak ditemukan atau host offline!", "error");
                 }
+            }, 8000);
 
-                const data = snap.data();
-                if (data.status !== 'lobby') {
-                    showToast("Permainan di room ini sudah dimulai!", "warning");
-                    return;
-                }
+            peer.on('open', (id) => {
+                myPeerId = id;
+                const conn = peer.connect(hostPeerId, { reliable: true });
+                guestConnection = conn;
 
-                const alreadyIn = data.players.some(p => p.id === currentUser.uid);
-                if (!alreadyIn) {
-                    if (data.players.length >= 4) {
-                        showToast("Room sudah penuh (Maksimal 4 pemain)!", "error");
-                        return;
-                    }
-                    const playerName = getPlayerName();
-                    const usedColors = data.players.map(p => p.colorIdx);
-                    const nextColor = [0, 1, 2, 3].find(c => !usedColors.includes(c)) ?? 0;
-
-                    const updatedPlayers = [
-                        ...data.players,
-                        { id: currentUser.uid, name: playerName, pos: 0, colorIdx: nextColor, isBot: false }
-                    ];
-
-                    await updateDoc(roomRef, {
-                        players: updatedPlayers,
-                        updatedAt: Date.now()
+                conn.on('open', () => {
+                    clearTimeout(timeoutTimer);
+                    conn.send({
+                        type: 'JOIN_REQUEST',
+                        name: playerName
                     });
-                }
+                    btn.disabled = false;
+                    btn.textContent = "Gabung";
+                    showToast(`Berhasil terhubung ke room ${rawCode}!`, "success");
+                });
 
-                listenToRoom(rawCode);
-                showToast(`Berhasil bergabung ke room ${rawCode}!`, "success");
-            } catch (err) {
-                console.error(err);
-                showToast("Terjadi kesalahan saat bergabung ke room.", "error");
-            } finally {
+                conn.on('data', (data) => {
+                    if (data.type === 'STATE_SYNC') {
+                        applySyncedState(data.state);
+                    } else if (data.type === 'ERROR') {
+                        showToast(data.message, "error");
+                        backToMenu();
+                    }
+                });
+
+                conn.on('close', () => {
+                    showToast("Koneksi terputus dari pembuat room.", "warning");
+                    backToMenu();
+                });
+            });
+
+            peer.on('error', (err) => {
+                clearTimeout(timeoutTimer);
+                console.error("PeerJS Guest Error:", err);
                 btn.disabled = false;
                 btn.textContent = "Gabung";
-            }
-        };
-
-        function listenToRoom(roomCode) {
-            if (unsubscribeRoom) unsubscribeRoom();
-
-            const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', roomCode);
-            unsubscribeRoom = onSnapshot(roomRef, (docSnap) => {
-                if (!docSnap.exists()) {
-                    showToast("Room telah ditutup oleh host.", "warning");
-                    backToMenu();
-                    return;
-                }
-
-                const data = docSnap.data();
-                const prevStatus = gameState.status;
-                const boardChanged = JSON.stringify(activeLadders) !== JSON.stringify(data.ladders) || JSON.stringify(activeSnakes) !== JSON.stringify(data.snakes);
-                gameState = {
-                    mode: 'multiplayer',
-                    ...data
-                };
-
-                if (data.ladders && data.snakes) {
-                    activeLadders = data.ladders;
-                    activeSnakes = data.snakes;
-                }
-
-                if (data.status === 'lobby') {
-                    switchScreen('lobby');
-                    renderLobbyUI();
-                } else if (data.status === 'playing' || data.status === 'finished') {
-                    if (prevStatus !== 'playing' && prevStatus !== 'finished') {
-                        switchScreen('game');
-                        document.getElementById('tokens-layer').innerHTML = '';
-                        renderBoard();
-                    } else if (boardChanged) {
-                        renderBoard();
-                    }
-                    document.getElementById('game-mode-badge').textContent = `🌐 ${data.roomCode} • ${data.boardName || 'Klasik'}`;
-                    updateGameUI();
-                }
-            }, (error) => {
-                console.error("Snapshot error:", error);
-                showToast("Koneksi ke room terputus.", "error");
+                showToast("Kode room tidak ditemukan atau gagal terhubung!", "error");
+                cleanupPeer();
             });
-        }
+        };
 
         function renderLobbyUI() {
             document.getElementById('display-room-code').textContent = gameState.roomCode;
@@ -980,7 +1049,7 @@
             gameState.players.forEach((p, idx) => {
                 const color = PLAYER_COLORS[p.colorIdx];
                 const isHost = p.id === gameState.hostId;
-                const isMe = currentUser && p.id === currentUser.uid;
+                const isMe = myPeerId && p.id === myPeerId;
 
                 listEl.innerHTML += `
                     <div class="flex items-center justify-between p-3 bg-slate-900/80 border border-slate-700 rounded-2xl">
@@ -995,7 +1064,7 @@
                 `;
             });
 
-            const isHost = currentUser && gameState.hostId === currentUser.uid;
+            const isHost = myPeerId && gameState.hostId === myPeerId;
             const hostControls = document.getElementById('host-controls');
             const guestMsg = document.getElementById('guest-waiting-msg');
             const startBtn = document.getElementById('btn-start-multiplayer');
@@ -1013,35 +1082,6 @@
             }
         }
 
-        window.changeLobbyBoardPreset = async function() {
-            if (!db || !gameState.roomCode) return;
-            const presetKey = document.getElementById('lobby-board-preset').value;
-            const boardCfg = getBoardConfigByPreset(presetKey);
-            const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', gameState.roomCode);
-            await updateDoc(roomRef, {
-                boardPreset: presetKey,
-                boardName: boardCfg.name,
-                ladders: boardCfg.ladders,
-                snakes: boardCfg.snakes,
-                updatedAt: Date.now()
-            });
-            showToast(`Papan diubah ke ${boardCfg.name}`, "info");
-        };
-
-        window.shuffleLobbyBoard = async function() {
-            if (!db || !gameState.roomCode) return;
-            const boardCfg = generateRandomBoardLayout();
-            const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', gameState.roomCode);
-            await updateDoc(roomRef, {
-                boardPreset: 'random',
-                boardName: boardCfg.name,
-                ladders: boardCfg.ladders,
-                snakes: boardCfg.snakes,
-                updatedAt: Date.now()
-            });
-            showToast("Posisi ular & tangga diacak ulang!", "success");
-        };
-
         window.copyRoomCode = function() {
             const code = gameState.roomCode;
             const tempInput = document.createElement('input');
@@ -1053,32 +1093,22 @@
             showToast(`Kode room ${code} disalin!`, "success");
         };
 
-        window.leaveLobby = async function() {
-            if (gameState.mode === 'multiplayer' && db && currentUser && gameState.roomCode) {
-                try {
-                    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', gameState.roomCode);
-                    const remaining = gameState.players.filter(p => p.id !== currentUser.uid);
-                    if (remaining.length > 0) {
-                        const newHost = gameState.hostId === currentUser.uid ? remaining[0].id : gameState.hostId;
-                        await updateDoc(roomRef, {
-                            players: remaining,
-                            hostId: newHost
-                        });
-                    }
-                } catch (e) { console.error(e); }
-            }
+        window.leaveLobby = function() {
             backToMenu();
         };
 
-        window.startMultiplayerGame = async function() {
-            if (!db || !gameState.roomCode) return;
-            const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', gameState.roomCode);
-            await updateDoc(roomRef, {
-                status: 'playing',
-                turnIndex: 0,
-                lastLog: `Permainan dimulai! Giliran ${gameState.players[0].name}.`,
-                updatedAt: Date.now()
-            });
+        window.startMultiplayerGame = function() {
+            if (gameState.hostId !== myPeerId) return;
+            gameState.status = 'playing';
+            gameState.turnIndex = 0;
+            gameState.lastLog = `Permainan dimulai! ${gameState.players[0].name} butuh angka 6 untuk keluar start.`;
+
+            switchScreen('game');
+            document.getElementById('tokens-layer').innerHTML = '';
+            renderBoard();
+            document.getElementById('game-mode-badge').textContent = `🌐 ${gameState.roomCode} • ${gameState.boardName || 'Klasik'}`;
+            updateGameUI();
+            broadcastStateToGuests();
         };
 
         // ==========================================
@@ -1092,12 +1122,23 @@
             if (gameState.mode === 'solo') {
                 return !currentPlayer.isBot;
             } else {
-                return currentUser && currentPlayer.id === currentUser.uid;
+                return myPeerId && currentPlayer.id === myPeerId;
             }
         }
 
         window.handleRollDice = async function() {
             if (isAnimating || !isMyTurn()) return;
+
+            if (gameState.mode === 'multiplayer' && gameState.hostId !== myPeerId) {
+                // Tamu mengirim permintaan kocok dadu ke Host agar giliran & animasi tersinkronisasi penuh
+                if (guestConnection && guestConnection.open) {
+                    document.getElementById('btn-roll-dice').disabled = true;
+                    document.getElementById('btn-roll-dice').textContent = "Mengocok...";
+                    guestConnection.send({ type: 'GUEST_ROLL_REQUEST' });
+                }
+                return;
+            }
+
             await executeTurn();
         };
 
@@ -1221,24 +1262,16 @@
                 gameState.winner = winnerName;
                 isAnimating = false;
                 updateGameUI();
-            } else if (gameState.mode === 'multiplayer' && db && gameState.roomCode) {
-                try {
-                    const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', gameState.roomCode);
-                    await updateDoc(roomRef, {
-                        players: playersCopy,
-                        turnIndex: nextTurnIndex,
-                        lastDice: diceValue,
-                        lastLog: logMsg,
-                        status: nextStatus,
-                        winner: winnerName,
-                        updatedAt: Date.now()
-                    });
-                } catch (e) {
-                    console.error("Failed to sync turn:", e);
-                    showToast("Gagal mengirim langkah ke server.", "error");
-                } finally {
-                    isAnimating = false;
-                }
+            } else if (gameState.mode === 'multiplayer') {
+                gameState.players = playersCopy;
+                gameState.turnIndex = nextTurnIndex;
+                gameState.lastDice = diceValue;
+                gameState.lastLog = logMsg;
+                gameState.status = nextStatus;
+                gameState.winner = winnerName;
+                isAnimating = false;
+                updateGameUI();
+                broadcastStateToGuests();
             }
         }
 
@@ -1261,7 +1294,7 @@
             gameState.players.forEach((p, idx) => {
                 const color = PLAYER_COLORS[p.colorIdx];
                 const isTurn = idx === gameState.turnIndex && gameState.status === 'playing';
-                const isMe = (gameState.mode === 'solo' && !p.isBot) || (currentUser && p.id === currentUser.uid);
+                const isMe = (gameState.mode === 'solo' && !p.isBot) || (myPeerId && p.id === myPeerId);
                 const posText = p.pos === 0 ? `<span class="text-amber-400">Garis Start (Butuh 6)</span>` : `Kotak <strong class="text-slate-200">${p.pos}</strong> / 100`;
 
                 listEl.innerHTML += `
@@ -1319,10 +1352,7 @@
         }
 
         window.backToMenu = function() {
-            if (unsubscribeRoom) {
-                unsubscribeRoom();
-                unsubscribeRoom = null;
-            }
+            cleanupPeer();
             isAnimating = false;
             gameState.status = 'menu';
             document.getElementById('win-modal').classList.add('hidden');
@@ -1331,7 +1361,7 @@
 
         // Jalankan inisialisasi saat halaman dimuat
         window.addEventListener('load', () => {
-            initFirebase();
+            initMultiplayerEngine();
         });
     </script>
 </body>
